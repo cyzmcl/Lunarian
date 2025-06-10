@@ -1,0 +1,5 @@
+{
+    "python.analysis.extraPaths": [
+        "./backend/u2net_repo"
+    ]
+}
