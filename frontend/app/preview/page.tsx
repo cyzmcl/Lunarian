@@ -196,13 +196,16 @@ export default function PreviewPage() {
         userInputHeroBbox,
       };
       console.log("POST /generate payload =", payload);
+      
+      const start: number = performance.now();
 
-      const apiUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/generate`;
-      const response = await fetch(apiUrl, {
+      const response = await fetch("http://localhost:8000/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      const end = performance.now();
+      console.log(`⏱️ API response time: ${(end - start).toFixed(2)} ms`);
 
       if (!response.ok) {
         console.error("Generate API error:", await response.text());
@@ -210,8 +213,17 @@ export default function PreviewPage() {
         return;
       }
 
-      const json    = await response.json();
-      const results = json.results as Record<string, string>;
+      let json;
+    try {
+      json = await response.json();
+    } catch (e) {
+      console.error("Failed to parse JSON:", e);
+      setLoading(false);
+      return;
+    }
+    console.log("✅ Generate result:", json);
+
+    const results = (json.results || {}) as Record<string, string>;
 
       // 5) Map results back into PreviewData[]
       const data = selectedFormats.map((id) => ({
@@ -247,7 +259,7 @@ export default function PreviewPage() {
           {/* --- NEW: Bulk Download Button --- */}
           <Button
             onClick={handleBulkDownload}
-            colorScheme="orange"
+            colorPalette="orange"
             loading={isZipping}
             loadingText="Zipping..."
             disabled={loading || previews.length === 0}

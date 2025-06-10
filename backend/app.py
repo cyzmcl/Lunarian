@@ -1,5 +1,4 @@
-# backend/app.py - Cleaned and Updated Version
-
+# backend/app.py
 import sys
 import os
 import traceback
