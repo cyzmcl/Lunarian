@@ -72,6 +72,7 @@ app = FastAPI()
 origins = [
     "http://localhost:3000",
     "https://www.lunarianworks.com",
+    "https://lunarianworks.com",
     # You can add other domains here if needed, like a staging environment
 ]
 app.add_middleware(
