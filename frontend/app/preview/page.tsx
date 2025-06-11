@@ -199,7 +199,7 @@ export default function PreviewPage() {
       
       const start: number = performance.now();
 
-      const response = await fetch("https://cyzmcl--lunarian-backend-modal-fastapi-app.modal.run/generate", {
+      const response = await fetch("https://lunarian-api.onrender.com/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

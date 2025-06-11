@@ -829,9 +829,8 @@ modal_app = modal.App("lunarian-backend-modal")
 modal_image = (
     modal.Image.debian_slim()
     .pip_install([
-        "fastapi", "uvicorn", "pydantic",
         "torch", "numpy", "Pillow", "requests",
-        "segment-anything",
+        "segment-anything","torchvision"
     ])
     .env({
         "SAM_CHECKPOINT_PATH": SAM_CHECKPOINT_PATH,
