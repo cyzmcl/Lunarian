@@ -1,9 +1,10 @@
 fastapi
 uvicorn
-torch
 numpy
 Pillow
 python-multipart
 segment-anything-py
 gunicorn
 scikit-image
+httpx
+pydantic

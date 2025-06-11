@@ -5,6 +5,7 @@ import traceback
 import base64
 import torch
 import numpy as np
+import httpx
 
 from io import BytesIO
 from typing import List, Dict, Optional, Tuple, Any
@@ -314,494 +315,51 @@ def get_edges_for_pos_key(pos_key: str) -> set:
     return edges
 
 # --- Main Ad Generation Logic ---
-@app.post("/generate", response_model=GenerateResponse)
-async def generate_ads(req: GenerateRequest):
+@app.post("/generate")
+async def proxy_generate(req: GenerateRequest):
+    """
+    Proxy /generate requests to the Modal endpoint.
+    Expects environment variable MODAL_URL set to base URL (without trailing slash),
+    e.g. 'https://cyzmcl--lunarian-backend-modal-fastapi-app.modal.run'.
+    """
+    modal_base = os.getenv("MODAL_URL")
+    if not modal_base:
+        raise HTTPException(status_code=500, detail="MODAL_URL environment variable not set")
+
+    # Construct full URL for Modal generate endpoint
+    # Ensure no double slash: if MODAL_URL ends with '/', strip it
+    modal_url = modal_base.rstrip("/") + "/generate"
+
     try:
-        src_pil = decode_data_url(req.sourceImage)
-        logo_pil_img = decode_data_url(req.brandLogo) if req.brandLogo and req.includeLogo else None 
-        hero_bbox = get_hero_bbox_from_input_or_sam(src_pil.copy(), req.userInputHeroBbox) 
-        
-        # --- MODIFICATION: Get font paths from request using the new helper ---
-        copy_font_path = get_font_path(req.copyFontFamily)
-        cta_font_path = get_font_path(req.ctaFont)
-        
-        print(f"Using Copy Font: {copy_font_path}")
-        print(f"Using CTA Font: {cta_font_path}")
-        output_results: Dict[str,str] = {}
+        # Timeout: adjust based on expected inference time
+        timeout_seconds = float(os.getenv("MODAL_REQUEST_TIMEOUT", "300"))
+    except ValueError:
+        timeout_seconds = 300.0
 
-        for fmt_item in req.formats:
-            fid, tw, th = fmt_item.id, fmt_item.width, fmt_item.height
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            # Forward JSON body exactly
+            resp = await client.post(modal_url, json=req.dict())
+            # If Modal returned non-2xx, raise for status to catch below
+            resp.raise_for_status()
+            # Return the JSON as-is
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        # Modal responded with an HTTP error code
+        status = e.response.status_code
+        # Attempt to read response body for detail
+        try:
+            detail_text = e.response.text
+        except Exception:
+            detail_text = "<failed to read Modal error body>"
+        raise HTTPException(status_code=status, detail=f"Modal error: {detail_text}")
+    except httpx.RequestError as e:
+        # Network or timeout errors
+        raise HTTPException(status_code=502, detail=f"Error calling Modal: {e}")
+    except Exception as e:
+        # Unexpected errors
+        raise HTTPException(status_code=500, detail=f"Unexpected error proxying to Modal: {e}")
 
-            if tw == th: orientation = "square"
-            elif th > tw: orientation = "portrait"
-            else: orientation = "landscape"
-
-            if (tw, th) == (1440, 2560): 
-                sx, sy, sw, sh = map(int, (127.34, 254.56, 1182.1, 2072.43))
-            else: 
-                margin_pct = 0.07
-                margin_x = int(tw * margin_pct)
-                margin_y = int(th * margin_pct)
-                sx, sy = margin_x, margin_y
-                sw, sh = tw - 2 * margin_x, th - 2 * margin_y
-            safe_w, safe_h = sw, sh
-
-            show_logo_for_format = req.includeLogo and logo_pil_img and (req.logoAppliesToAll or fid in req.logoSelectedFormats)
-            show_copy_for_format = req.includeCopy and req.adCopy and (req.copyAppliesToAll or fid in req.copySelectedFormats)
-            show_cta_for_format  = req.includeCta  and req.ctaText and (req.ctaAppliesToAll  or fid in req.ctaSelectedFormats)
-
-            logo_pos_key = req.logoPositionByOrientation.get(orientation, "top_center")
-            copy_pos_key = req.copyPositionByOrientation.get(orientation, "bottom_center")
-            if copy_pos_key == "let_ai_choose": copy_pos_key = "bottom_center" 
-            cta_pos_key = req.ctaPositionByOrientation.get(orientation, "bottom_center")
-            if cta_pos_key == "let_ai_choose": cta_pos_key = "bottom_center"
-
-            format_level_logo_short_side_ref = int(((safe_h * safe_w) * 0.02) ** 0.5) 
-            if show_logo_for_format and logo_pil_img:
-                is_square_fmt_g = (tw == th)
-                is_special_fmt_g = (tw, th) in [(300, 250), (336, 280)]
-                is_portrait_fmt_g = th > tw
-
-                if is_square_fmt_g or is_special_fmt_g: pct_g = 0.0215
-                elif is_portrait_fmt_g: pct_g = 0.02 
-                else: pct_g = 0.035 
-                
-                logo_area_g = (safe_w * safe_h) * pct_g
-                orig_w_g, orig_h_g = logo_pil_img.size
-                aspect_g = orig_w_g / orig_h_g if orig_h_g > 0 else 1
-                logo_h_g_calc = int((logo_area_g / aspect_g) ** 0.5) if aspect_g > 0 else 0
-                logo_w_g_calc = int(logo_h_g_calc * aspect_g)
-                
-                logo_w_g_calc = min(logo_w_g_calc, safe_w)
-                logo_h_g_calc = min(logo_h_g_calc, safe_h)
-                
-                if logo_w_g_calc > 0 and logo_h_g_calc > 0:
-                    format_level_logo_short_side_ref = min(logo_w_g_calc, logo_h_g_calc)
-
-            elements_for_prepass = []
-            if show_logo_for_format: elements_for_prepass.append(("logo", logo_pos_key, logo_pil_img))
-            if show_copy_for_format: elements_for_prepass.append(("copy", copy_pos_key, req.adCopy))
-            if show_cta_for_format:  elements_for_prepass.append(("cta",  cta_pos_key,  req.ctaText))
-
-            pos_groups_prepass = defaultdict(list)
-            for name, pos_key_item, content in elements_for_prepass:
-                pos_groups_prepass[pos_key_item].append((name, content))
-            
-            edge_blocks = {"top": [], "bottom": [], "left": [], "right": []}
-            pre_pass_element_spacing = max(3, int(min(safe_w, safe_h) * 0.02))
-
-            for pos_key_item, group_content in pos_groups_prepass.items():
-                current_group_total_h = 0
-                current_group_max_w = 0
-                
-                logo_w_pre, logo_h_pre = 0, 0
-                for name, content_item in group_content:
-                    if name == "logo": 
-                        is_square_fmt = (tw == th)
-                        is_special_fmt = (tw, th) in [(300, 250), (336, 280)]
-                        is_portrait_fmt = th > tw
-                        
-                        if is_square_fmt or is_special_fmt: pct = 0.0215
-                        elif is_portrait_fmt: pct = 0.02
-                        else: pct = 0.035 
-
-                        logo_area = (safe_w * safe_h) * pct
-                        orig_w, orig_h = content_item.size
-                        aspect = orig_w / orig_h if orig_h > 0 else 1
-                        logo_h_pre = int((logo_area / aspect) ** 0.5) if aspect > 0 else 0
-                        logo_w_pre = int(logo_h_pre * aspect)
-                        logo_w_pre = min(logo_w_pre, safe_w)
-                        logo_h_pre = min(logo_h_pre, safe_h)
-                        break 
-
-                num_elements_in_group = len(group_content)
-                for idx, (name, content_item) in enumerate(group_content):
-                    el_w, el_h = 0, 0
-                    if name == "logo":
-                        el_w, el_h = logo_w_pre, logo_h_pre 
-                    elif name == "copy":
-                        buffer = 4
-                        if "left" in pos_key_item or "right" in pos_key_item:
-                            max_ac_w = int(safe_w * 0.40)
-                        else:
-                            max_ac_w = int(safe_w * 0.80)
-                        max_ac_w = min(max_ac_w, safe_w - buffer)
-                        max_ac_w = max(int(safe_w * 0.30), max_ac_w)
-                        
-                        lss_ref = format_level_logo_short_side_ref 
-                        ac_target_h = int(lss_ref * 1.25)
-                        # Use copy_font_path
-                        ac_font_sz = find_font_size_for_height(ac_target_h, copy_font_path)
-                        ac_fnt = ImageFont.truetype(copy_font_path, ac_font_sz)
-                        ac_line_h_approx = (ac_fnt.getbbox("Aj")[3] - ac_fnt.getbbox("Aj")[1]) if ac_fnt.getbbox("Aj") else ac_font_sz
-                        
-                        ad_copy_lines = []
-                        curr_l, words = "", content_item.split()
-                        for word in words:
-                            test_l = curr_l + (" " if curr_l else "") + word
-                            lw = ac_fnt.getbbox(test_l)[2] - ac_fnt.getbbox(test_l)[0] if ac_fnt.getbbox(test_l) else len(test_l) * ac_font_sz * 0.6 
-                            if lw <= max_ac_w: curr_l = test_l
-                            else:
-                                if curr_l: ad_copy_lines.append(curr_l)
-                                curr_l = word
-                        if curr_l: ad_copy_lines.append(curr_l)
-                        if not ad_copy_lines and content_item: ad_copy_lines.append(content_item[:int(max_ac_w/(ac_font_sz*0.6))])
-                        
-                        def all_lines_fit_prepass(lines, font, target_w):
-                            for line in lines:
-                                line_bbox = font.getbbox(line)
-                                lw = line_bbox[2] - line_bbox[0] if line_bbox else 0
-                                if lw > target_w:
-                                    return False
-                            return True
-
-                        temp_ad_copy_lines = list(ad_copy_lines)
-                        current_ac_font_sz = ac_font_sz
-                        current_ac_fnt = ac_fnt
-
-                        while current_ac_font_sz > 10:
-                            if current_ac_font_sz != ac_font_sz or temp_ad_copy_lines is None :
-                                temp_ad_copy_lines = []
-                                curr_l_temp, words_temp = "", content_item.split()
-                                for word_temp in words_temp:
-                                    test_l_temp = curr_l_temp + (" " if curr_l_temp else "") + word_temp
-                                    lw_temp = current_ac_fnt.getbbox(test_l_temp)[2] - current_ac_fnt.getbbox(test_l_temp)[0] if current_ac_fnt.getbbox(test_l_temp) else len(test_l_temp) * current_ac_font_sz * 0.6
-                                    if lw_temp <= max_ac_w: curr_l_temp = test_l_temp
-                                    else:
-                                        if curr_l_temp: temp_ad_copy_lines.append(curr_l_temp)
-                                        curr_l_temp = word_temp
-                                if curr_l_temp: temp_ad_copy_lines.append(curr_l_temp)
-                                if not temp_ad_copy_lines and content_item: temp_ad_copy_lines.append(content_item[:int(max_ac_w/(current_ac_font_sz*0.6))])
-
-                            if all_lines_fit_prepass(temp_ad_copy_lines, current_ac_fnt, max_ac_w):
-                                ad_copy_lines = temp_ad_copy_lines
-                                ac_font_sz = current_ac_font_sz
-                                ac_fnt = current_ac_fnt
-                                ac_line_h_approx = (ac_fnt.getbbox("Aj")[3] - ac_fnt.getbbox("Aj")[1]) if ac_fnt.getbbox("Aj") else ac_font_sz
-                                break 
-                            current_ac_font_sz -= 1
-                            current_ac_fnt = ImageFont.truetype(copy_font_path, current_ac_font_sz)
-                        else:
-                            ad_copy_lines = temp_ad_copy_lines
-                            ac_font_sz = current_ac_font_sz
-                            ac_fnt = current_ac_fnt
-                            ac_line_h_approx = (ac_fnt.getbbox("Aj")[3] - ac_fnt.getbbox("Aj")[1]) if ac_fnt.getbbox("Aj") else ac_font_sz
-
-                        ac_line_sp = int(ac_line_h_approx * 0.2)
-                        el_h = len(ad_copy_lines) * (ac_line_h_approx + ac_line_sp) - (ac_line_sp if ac_line_sp > 0 and len(ad_copy_lines)>0 else 0)
-                        el_h = max(0, el_h) 
-
-                        el_w = 0
-                        for line in ad_copy_lines:
-                            lw = ac_fnt.getbbox(line)[2] - ac_fnt.getbbox(line)[0] if ac_fnt.getbbox(line) else 0
-                            el_w = max(el_w, lw)
-                        el_w = min(el_w, safe_w)
-
-                    elif name == "cta":
-                        lss_ref = format_level_logo_short_side_ref 
-                        el_h = lss_ref 
-                        cta_fnt_sz = max(10, min(int(el_h * 0.6), 80))
-                        # Use cta_font_path
-                        cta_fnt = ImageFont.truetype(cta_font_path, cta_fnt_sz)
-                        cta_txt_bbox = cta_fnt.getbbox(content_item.upper())
-                        cta_txt_w = cta_txt_bbox[2] - cta_txt_bbox[0] if cta_txt_bbox else 0
-                        cta_pad_x = int(cta_fnt_sz * 1)
-                        el_w = cta_txt_w + 2 * cta_pad_x
-                        el_w = min(el_w, safe_w) 
-                    
-                    current_group_max_w = max(current_group_max_w, el_w)
-                    current_group_total_h += el_h
-                    if idx < num_elements_in_group - 1:
-                        current_group_total_h += pre_pass_element_spacing
-                
-                occupied_edges = get_edges_for_pos_key(pos_key_item)
-                for edge in occupied_edges:
-                    if edge in ["top", "bottom"]: 
-                        edge_blocks[edge].append((current_group_max_w, current_group_total_h))
-                    elif edge in ["left", "right"]: 
-                        edge_blocks[edge].append((current_group_max_w, current_group_total_h))
-
-            occupied_top = sum(h for _, h in edge_blocks["top"]) + (pre_pass_element_spacing if edge_blocks["top"] else 0)
-            occupied_bottom = sum(h for _, h in edge_blocks["bottom"]) + (pre_pass_element_spacing if edge_blocks["bottom"] else 0)
-            occupied_left = sum(w for w, _ in edge_blocks["left"]) + (pre_pass_element_spacing if edge_blocks["left"] else 0)
-            occupied_right = sum(w for w, _ in edge_blocks["right"]) + (pre_pass_element_spacing if edge_blocks["right"] else 0)
-            
-            hero_area_x = sx + occupied_left
-            hero_area_y = sy + occupied_top
-            hero_area_w = max(1, sw - occupied_left - occupied_right)
-            hero_area_h = max(1, sh - occupied_top - occupied_bottom)
-
-            canvas = create_base_canvas_with_hero(
-                src_pil, tw, th, hero_bbox,
-                hero_area_x, hero_area_y, hero_area_w, hero_area_h
-            )
-            draw = ImageDraw.Draw(canvas)
-            
-            elements_for_drawing = []
-            if show_logo_for_format: elements_for_drawing.append(("logo", logo_pos_key, logo_pil_img))
-            if show_copy_for_format: elements_for_drawing.append(("copy", copy_pos_key, req.adCopy))
-            if show_cta_for_format:  elements_for_drawing.append(("cta",  cta_pos_key,  req.ctaText))
-
-            pos_groups_drawing = defaultdict(list)
-            for name, pos_key_item, content in elements_for_drawing:
-                pos_groups_drawing[pos_key_item].append((name, content))
-
-            for pos_key_item, group_content in pos_groups_drawing.items():
-                stacking_order = []
-                content_by_name = {name: content for name, content in group_content}
-
-                if pos_key_item == "bottom_center" and len(group_content) == 2:
-                    names = list(content_by_name.keys())
-                    has_copy = "copy" in names
-                    has_cta = "cta" in names
-                    has_logo = "logo" in names
-                    if has_copy:
-                        stacking_order.append("copy")
-                        if has_cta: stacking_order.append("cta")
-                        elif has_logo: stacking_order.append("logo")
-                    elif has_cta: 
-                        stacking_order.append("cta")
-                        if has_logo: stacking_order.append("logo")
-                    elif has_logo: 
-                         stacking_order.append("logo")
-                else: 
-                    if "logo" in content_by_name: stacking_order.append("logo")
-                    if "copy" in content_by_name: stacking_order.append("copy")
-                    if "cta" in content_by_name: stacking_order.append("cta")
-                
-                is_square_fmt = (tw == th)
-                is_special_fmt = (tw, th) in [(300, 250), (336, 280)]
-                is_portrait_fmt = th > tw
-
-                if is_portrait_fmt:
-                    logo_spacing = max(3, int(safe_h * 0.05))
-                    copy_cta_spacing = max(3, int(safe_h * 0.02))
-                elif is_square_fmt or is_special_fmt:
-                    logo_spacing = max(3, int(safe_h * 0.06))
-                    copy_cta_spacing = max(3, int(safe_h * 0.03))
-                else:  # landscape
-                    logo_spacing = max(3, int(safe_h * 0.06))
-                    copy_cta_spacing = max(3, int(safe_h * 0.05))
-                general_element_spacing = max(3, int(min(safe_w, safe_h) * 0.02))
-                
-                el_render_details = [] 
-                
-                logo_w_final_local, logo_h_final_local = 0,0
-                for name, content_item in group_content:
-                    if name == "logo":
-                        if is_square_fmt or is_special_fmt: pct = 0.0215
-                        elif is_portrait_fmt: pct = 0.02
-                        else: pct = 0.035
-                        
-                        logo_area = (safe_w * safe_h) * pct 
-                        orig_w, orig_h = content_item.size
-                        aspect = orig_w / orig_h if orig_h > 0 else 1
-                        logo_h_final_local = int((logo_area / aspect) ** 0.5) if aspect > 0 else 0
-                        logo_w_final_local = int(logo_h_final_local * aspect)
-                        logo_w_final_local = min(logo_w_final_local, safe_w) 
-                        logo_h_final_local = min(logo_h_final_local, safe_h)
-                        el_render_details.append({"name": "logo", "width": logo_w_final_local, "height": logo_h_final_local, "content": content_item})
-                        break
-                
-                for name, content_item in group_content:
-                    if name == "logo" and any(d["name"] == "logo" for d in el_render_details): continue 
-
-                    if name == "copy":
-                        buffer_final = 4
-                        if "left" in pos_key_item or "right" in pos_key_item:
-                            max_ac_w_final = int(safe_w * 0.40)
-                        else:
-                            max_ac_w_final = int(safe_w * 0.80)
-                        max_ac_w_final = min(max_ac_w_final, safe_w - buffer_final)
-                        max_ac_w_final = max(int(safe_w * 0.30), max_ac_w_final)
-
-                        lss_ref = format_level_logo_short_side_ref 
-                        ac_target_h_final = int(lss_ref * 1.25)
-                        # Use copy_font_path
-                        ac_font_sz_final = find_font_size_for_height(ac_target_h_final, copy_font_path)
-                        ac_fnt_final = ImageFont.truetype(copy_font_path, ac_font_sz_final)
-                        ac_line_h_approx_final = (ac_fnt_final.getbbox("Aj")[3] - ac_fnt_final.getbbox("Aj")[1]) if ac_fnt_final.getbbox("Aj") else ac_font_sz_final
-                        
-                        ad_copy_lines_final = []
-                        curr_l, words = "", content_item.split()
-                        for word in words:
-                            test_l = curr_l + (" " if curr_l else "") + word
-                            lw = ac_fnt_final.getbbox(test_l)[2] - ac_fnt_final.getbbox(test_l)[0] if ac_fnt_final.getbbox(test_l) else len(test_l) * ac_font_sz_final * 0.6
-                            if lw <= max_ac_w_final: curr_l = test_l
-                            else:
-                                if curr_l: ad_copy_lines_final.append(curr_l)
-                                curr_l = word
-                        if curr_l: ad_copy_lines_final.append(curr_l)
-                        if not ad_copy_lines_final and content_item: ad_copy_lines_final.append(content_item[:int(max_ac_w_final/(ac_font_sz_final*0.6))])
-
-                        def all_lines_fit_final(lines, font, target_w):
-                            for line in lines:
-                                line_bbox = font.getbbox(line)
-                                lw = line_bbox[2] - line_bbox[0] if line_bbox else 0
-                                if lw > target_w:
-                                    return False
-                            return True
-                        
-                        temp_ad_copy_lines_final = list(ad_copy_lines_final)
-                        current_ac_font_sz_final = ac_font_sz_final
-                        current_ac_fnt_final = ac_fnt_final
-
-                        while current_ac_font_sz_final > 10:
-                            if current_ac_font_sz_final != ac_font_sz_final or temp_ad_copy_lines_final is None:
-                                temp_ad_copy_lines_final = []
-                                curr_l_temp, words_temp = "", content_item.split()
-                                for word_temp in words_temp:
-                                    test_l_temp = curr_l_temp + (" " if curr_l_temp else "") + word_temp
-                                    lw_temp = current_ac_fnt_final.getbbox(test_l_temp)[2] - current_ac_fnt_final.getbbox(test_l_temp)[0] if current_ac_fnt_final.getbbox(test_l_temp) else len(test_l_temp) * current_ac_font_sz_final * 0.6
-                                    if lw_temp <= max_ac_w_final: curr_l_temp = test_l_temp
-                                    else:
-                                        if curr_l_temp: temp_ad_copy_lines_final.append(curr_l_temp)
-                                        curr_l_temp = word_temp
-                                if curr_l_temp: temp_ad_copy_lines_final.append(curr_l_temp)
-                                if not temp_ad_copy_lines_final and content_item: temp_ad_copy_lines_final.append(content_item[:int(max_ac_w_final/(current_ac_font_sz_final*0.6))])
-
-                            if all_lines_fit_final(temp_ad_copy_lines_final, current_ac_fnt_final, max_ac_w_final):
-                                ad_copy_lines_final = temp_ad_copy_lines_final
-                                ac_font_sz_final = current_ac_font_sz_final
-                                ac_fnt_final = current_ac_fnt_final
-                                ac_line_h_approx_final = (ac_fnt_final.getbbox("Aj")[3] - ac_fnt_final.getbbox("Aj")[1]) if ac_fnt_final.getbbox("Aj") else ac_font_sz_final
-                                break
-                            current_ac_font_sz_final -=1
-                            current_ac_fnt_final = ImageFont.truetype(copy_font_path, current_ac_font_sz_final)
-                        else:
-                            ad_copy_lines_final = temp_ad_copy_lines_final
-                            ac_font_sz_final = current_ac_font_sz_final
-                            ac_fnt_final = current_ac_fnt_final
-                            ac_line_h_approx_final = (ac_fnt_final.getbbox("Aj")[3] - ac_fnt_final.getbbox("Aj")[1]) if ac_fnt_final.getbbox("Aj") else ac_font_sz_final
-
-                        ac_line_sp_final = int(ac_line_h_approx_final * 0.2)
-                        ac_block_h_final = len(ad_copy_lines_final) * (ac_line_h_approx_final + ac_line_sp_final) - (ac_line_sp_final if ac_line_sp_final > 0 and len(ad_copy_lines_final)>0 else 0)
-                        ac_block_h_final = max(0, ac_block_h_final)
-                        
-                        ac_block_w_final = 0
-                        for line in ad_copy_lines_final:
-                            lw = ac_fnt_final.getbbox(line)[2] - ac_fnt_final.getbbox(line)[0] if ac_fnt_final.getbbox(line) else 0
-                            ac_block_w_final = max(ac_block_w_final, lw)
-                        ac_block_w_final = min(ac_block_w_final, safe_w)
-                        
-                        el_render_details.append({
-                            "name": "copy", "width": ac_block_w_final, "height": ac_block_h_final, 
-                            "lines": ad_copy_lines_final, "line_spacing": ac_line_sp_final, 
-                            "font": ac_fnt_final, "line_height_approx": ac_line_h_approx_final, "content": content_item
-                        })
-
-                    elif name == "cta":
-                        lss_ref = format_level_logo_short_side_ref 
-                        cta_h_final = lss_ref
-                        cta_fnt_sz_final = max(10, min(int(cta_h_final * 0.6), 80))
-                        
-                        # Use cta_font_path
-                        cta_fnt_final = ImageFont.truetype(cta_font_path, cta_fnt_sz_final)
-                        
-                        cta_txt_bbox_final = cta_fnt_final.getbbox(content_item.upper())
-                        cta_txt_w_final = cta_txt_bbox_final[2] - cta_txt_bbox_final[0] if cta_txt_bbox_final else 0
-                        cta_txt_h_approx_final = cta_txt_bbox_final[3] - cta_txt_bbox_final[1] if cta_txt_bbox_final else cta_fnt_sz_final
-                        
-                        cta_text_offset_y = ((cta_h_final - cta_txt_h_approx_final) // 2) - (cta_txt_bbox_final[1] if cta_txt_bbox_final else 0)
-                        cta_pad_x_final = int(cta_fnt_sz_final * 1)
-                        cta_w_final = cta_txt_w_final + 2 * cta_pad_x_final
-                        cta_w_final = min(cta_w_final, safe_w) 
-                        cta_text_offset_x = cta_pad_x_final 
-
-                        el_render_details.append({
-                            "name": "cta", "width": cta_w_final, "height": cta_h_final, 
-                            "font": cta_fnt_final, "text_offset_x": cta_text_offset_x, "text_offset_y": cta_text_offset_y,
-                            "content": content_item.upper()
-                        })
-                
-                el_render_details_sorted = sorted(
-                    el_render_details, 
-                    key=lambda x: stacking_order.index(x["name"]) if x["name"] in stacking_order else 99
-                )
-
-                stacked_block_total_h = 0
-                stacked_block_max_w = 0
-                for i, el_detail in enumerate(el_render_details_sorted):
-                    stacked_block_total_h += el_detail["height"]
-                    stacked_block_max_w = max(stacked_block_max_w, el_detail["width"])
-                    if i < len(el_render_details_sorted) - 1:
-                        curr_type = el_detail["name"]
-                        next_type = el_render_details_sorted[i+1]["name"]
-                        if (curr_type == "logo" and next_type in ("copy", "cta")) or \
-                           (next_type == "logo" and curr_type in ("copy", "cta")):
-                            stacked_block_total_h += logo_spacing
-                        elif (curr_type == "copy" and next_type == "cta") or \
-                             (curr_type == "cta" and next_type == "copy"):
-                            stacked_block_total_h += copy_cta_spacing
-                        else: 
-                            stacked_block_total_h += general_element_spacing
-                
-                gx, gy = get_element_position(
-                    pos_key_item, stacked_block_max_w, stacked_block_total_h, 
-                    sx, sy, safe_w, safe_h 
-                )
-
-                current_y_offset = gy
-                for i, el_detail in enumerate(el_render_details_sorted):
-                    el_name = el_detail["name"]
-                    el_w = el_detail["width"] 
-                    el_h = el_detail["height"]
-                    
-                    px = gx + (stacked_block_max_w - el_w) // 2
-
-                    if el_name == "logo":
-                        logo_resized = el_detail["content"].resize((el_w, el_h), Image.LANCZOS)
-                        canvas.paste(logo_resized, (px, current_y_offset), logo_resized)
-                    
-                    elif el_name == "copy":
-                        text_block_x = px 
-                        for line_idx, line_text in enumerate(el_detail["lines"]):
-                            line_bbox = el_detail["font"].getbbox(line_text)
-                            actual_line_w = line_bbox[2] - line_bbox[0] if line_bbox else 0
-                            
-                            draw_line_x = text_block_x 
-                            if actual_line_w < el_w: 
-                                draw_line_x = text_block_x + (el_w - actual_line_w) // 2
-                            
-                            draw.text(
-                                (draw_line_x, current_y_offset + line_idx * (el_detail["line_height_approx"] + el_detail["line_spacing"])),
-                                line_text, fill=req.copyBrandColor, font=el_detail["font"]
-                            )
-                    
-                    elif el_name == "cta":
-                        draw.rectangle(
-                            [(px, current_y_offset), (px + el_w, current_y_offset + el_h)],
-                                fill=req.ctaBgColor 
-                        )
-                            
-                        draw.text(
-                                (px + el_detail["text_offset_x"], current_y_offset + el_detail["text_offset_y"]),
-                                el_detail["content"], 
-                                fill=req.ctaTextColor, 
-                                font=el_detail["font"]
-                        )
-
-                    current_y_offset += el_h
-                    if i < len(el_render_details_sorted) - 1:
-                        curr_type = el_detail["name"]
-                        next_type = el_render_details_sorted[i+1]["name"]
-                        if (curr_type == "logo" and next_type in ("copy", "cta")) or \
-                           (next_type == "logo" and curr_type in ("copy", "cta")):
-                            current_y_offset += logo_spacing
-                        elif (curr_type == "copy" and next_type == "cta") or \
-                             (curr_type == "cta" and next_type == "copy"):
-                            current_y_offset += copy_cta_spacing
-                        else:
-                            current_y_offset += general_element_spacing
-            
-            output_results[fid] = encode_image_to_data_url(canvas)
-        return {"results": output_results}
-
-    except HTTPException: 
-        raise
-    except Exception as e: 
-        print(f"Error in /generate: {e}"); traceback.print_exc()
-        raise HTTPException(500,detail=f"Internal server error: {str(e)}")
 
 # --- Debug Endpoint ---
 @app.post("/debug_hero_mask")

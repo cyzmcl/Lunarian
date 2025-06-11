@@ -16,7 +16,7 @@ from collections import defaultdict
 
 
 # 1. Environment variables for SAM checkpoint
-SAM_CHECKPOINT_PATH = os.environ.get("SAM_CHECKPOINT_PATH", "/root/.cache/sam/sam_vit_b.pth")
+SAM_CHECKPOINT_PATH = os.environ.get("SAM_CHECKPOINT_PATH", "/tmp/sam/sam_vit_b.pth")
 SAM_CHECKPOINT_URL = os.environ.get(
     "SAM_CHECKPOINT_URL",
     "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
@@ -823,7 +823,7 @@ async def generate_ads(req: GenerateRequest):
 # 6. Modal stub setup
 import modal
 
-modal_stub = modal.Stub("lunarian-backend-modal")
+modal_app = modal.App("lunarian-backend-modal")
 
 # Build image with all dependencies your code needs:
 modal_image = (
@@ -831,23 +831,23 @@ modal_image = (
     .pip_install([
         "fastapi", "uvicorn", "pydantic",
         "torch", "numpy", "Pillow", "requests",
-        "segment-anything"
-        # plus any other libraries your inference needs
+        "segment-anything",
     ])
+    .env({
+        "SAM_CHECKPOINT_PATH": SAM_CHECKPOINT_PATH,
+        "SAM_CHECKPOINT_URL": SAM_CHECKPOINT_URL,
+        "SAM_MODEL_TYPE": SAM_MODEL_TYPE,
+        # any other non-sensitive vars
+    })
 )
 
 # Environment variables for Modal function
-env_vars = {
-    "SAM_CHECKPOINT_PATH": SAM_CHECKPOINT_PATH,
-    "SAM_CHECKPOINT_URL": SAM_CHECKPOINT_URL,
-    "SAM_MODEL_TYPE": SAM_MODEL_TYPE,
-}
 
-@modal_stub.function(
+
+@modal_app.function(
     image=modal_image,
     gpu="A10G",
     timeout=800,
-    env_vars=env_vars,
 )
 @modal.asgi_app()
 def fastapi_app():
