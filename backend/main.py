@@ -1,95 +1,78 @@
-# backend/app.py
-import sys
+# main.py
+
 import os
+import io
+from io import BytesIO
 import traceback
 import base64
+import requests
 import torch
 import numpy as np
-
-from io import BytesIO
-from typing import List, Dict, Optional, Tuple, Any
-
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-
 from PIL import Image, ImageDraw, ImageFont
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Dict, Optional, Tuple
 from collections import defaultdict
 
-# Assuming SAM is in a subdirectory or installed
+
+# 1. Environment variables for SAM checkpoint
+SAM_CHECKPOINT_PATH = os.environ.get("SAM_CHECKPOINT_PATH", "/root/.cache/sam/sam_vit_b.pth")
+SAM_CHECKPOINT_URL = os.environ.get(
+    "SAM_CHECKPOINT_URL",
+    "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
+)
+# If you prefer ViT-L or ViT-B, override SAM_CHECKPOINT_URL accordingly when deploying.
+SAM_MODEL_TYPE = os.environ.get("SAM_MODEL_TYPE", "vit_b")
+
+def ensure_sam_checkpoint():
+    """
+    Download the SAM checkpoint from SAM_CHECKPOINT_URL into SAM_CHECKPOINT_PATH
+    if not already present. Runs once at container cold-start.
+    """
+    if os.path.exists(SAM_CHECKPOINT_PATH):
+        print(f"SAM checkpoint already exists at {SAM_CHECKPOINT_PATH}", flush=True)
+        return
+    # Create directory if needed
+    os.makedirs(os.path.dirname(SAM_CHECKPOINT_PATH), exist_ok=True)
+    if not SAM_CHECKPOINT_URL:
+        raise RuntimeError("SAM_CHECKPOINT_URL not set")
+    print(f"Downloading SAM checkpoint from {SAM_CHECKPOINT_URL}", flush=True)
+    try:
+        resp = requests.get(SAM_CHECKPOINT_URL, stream=True, timeout=300)
+        resp.raise_for_status()
+        with open(SAM_CHECKPOINT_PATH, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                f.write(chunk)
+        print("Downloaded SAM checkpoint successfully", flush=True)
+    except Exception as e:
+        print(f"Error downloading SAM checkpoint: {e}", flush=True)
+        raise
+
+# 2. Global init: download & load the SAM model once per container
+try:
+    ensure_sam_checkpoint()
+except Exception as e:
+    print(f"Failed to ensure SAM checkpoint: {e}", flush=True)
+    raise
+
+# Load SAM model
 try:
     from segment_anything import sam_model_registry, SamPredictor, SamAutomaticMaskGenerator
-except ImportError:
-    print("SAM not found, automatic hero detection will be limited.")
-    SamPredictor = None
-    sam_model_registry = None
-    SamAutomaticMaskGenerator = None
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Loading SAM model type {SAM_MODEL_TYPE} from {SAM_CHECKPOINT_PATH}", flush=True)
+    sam = sam_model_registry[SAM_MODEL_TYPE](checkpoint=SAM_CHECKPOINT_PATH)
+    sam.to(device)
+    predictor = SamPredictor(sam)
+    print("✅ SAM model loaded", flush=True)
+except Exception as e:
+    print(f"Error loading SAM model: {e}", flush=True)
+    predictor = None
 
-# --- Pydantic Models ---
-class FormatItem(BaseModel):
-    id: str
-    width: int
-    height: int
 
-class GenerateRequest(BaseModel):
-    sourceImage: str
-    userInputHeroBbox: Optional[Dict[str,int]] = None
-    
-    # --- Logo ---
-    brandLogo: Optional[str] = None
-    includeLogo: bool = False
-    logoAppliesToAll: bool = True
-    logoSelectedFormats: List[str] = []
-    logoPositionByOrientation: Dict[str, str] = {}
-    # --- Ad Copy ---
-    includeCopy: bool = False
-    adCopy: Optional[str] = None
-    # This is now a font filename from the frontend, e.g., "Inter-Regular.ttf"
-    copyFontFamily: Optional[str] = "/fonts/arial.ttf"
-    copyAppliesToAll: bool = True
-    copySelectedFormats: List[str] = []
-    copyPositionByOrientation: Dict[str, str] = {}
-    copyBrandColor: str = "#000000"
-    # --- CTA ---
-    includeCta: bool = False
-    ctaText: Optional[str] = None
-    ctaAppliesToAll: bool = True
-    ctaSelectedFormats: List[str] = []
-    ctaPositionByOrientation: Dict[str, str] = {}
-    # This is also a font filename
-    ctaFont: Optional[str] = "/fonts/arial.ttf" 
-    ctaTextColor: Optional[str] = "#FFFFFF"
-    ctaBgColor: Optional[str] = "#000000"
-
-    formats: List[FormatItem]
-
-class GenerateResponse(BaseModel):
-    results: Dict[str,str]
-
-# --- Globals & Initialization ---
-app = FastAPI()
-origins = [
-    "http://localhost:3000",
-    "https://www.lunarianworks.com",
-    "https://lunarianworks.com",
-    # You can add other domains here if needed, like a staging environment
-]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins, allow_methods=["*"],
-    allow_headers=["*"], allow_credentials=True,
-)
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
+# 3. Helper functions: paste your existing code here
 backend_dir = os.path.dirname(__file__)
-
-# --- NEW FONT HANDLING LOGIC ---
-# This section replaces the old font setup.
 FONT_DIR = os.path.join(backend_dir, "fonts")
 DEFAULT_FONT_PATH = os.path.join(FONT_DIR, "arial.ttf")
-
-# This map connects the filenames from the frontend to the full paths on the server.
-# Ensure these font files exist in your `backend/fonts/` directory.
 FONT_MAP = {
     "arial.ttf": os.path.join(FONT_DIR, "arial.ttf"),
     "helvetica.ttf": os.path.join(FONT_DIR, "helvetica.ttf"),
@@ -117,27 +100,6 @@ def get_font_path(font_filename: Optional[str]) -> str:
         return DEFAULT_FONT_PATH
     return path
 
-# --- End of new font handling ---
-
-sam_checkpoint_path = os.path.join(backend_dir, "sam_vit_b_01ec64.pth")
-sam_model_type = "vit_b"
-predictor = None
-
-# Removed global font variables like default_font_pil and current_font_path
-
-try:
-    if SamPredictor and sam_model_registry and os.path.exists(sam_checkpoint_path):
-        print(f"Loading SAM model from: {sam_checkpoint_path}")
-        sam = sam_model_registry[sam_model_type](checkpoint=sam_checkpoint_path)
-        sam.to(device)
-        predictor = SamPredictor(sam)
-        print("✅ SAM model loaded.")
-    else:
-        print(f"❌ SAM predictor not initialized. Check path or SAM installation. Path: {sam_checkpoint_path}, Exists: {os.path.exists(sam_checkpoint_path)}")
-except Exception as e:
-    print(f"Error during global initializations: {e}"); traceback.print_exc()
-
-# --- Utility Functions ---
 def decode_data_url(data_url: str) -> Image.Image:
     if not data_url: raise HTTPException(400, "Missing image data")
     header, encoded = data_url.split(",",1) if "," in data_url else ("",data_url)
@@ -312,8 +274,63 @@ def get_edges_for_pos_key(pos_key: str) -> set:
     if pos_key in ("top_center", "bottom_center"): edges.add("top" if "top" in pos_key else "bottom")
     if pos_key in ("left_middle", "right_middle"): edges.add("left" if "left" in pos_key else "right")
     return edges
+# Paste any other helpers from your original app.py, e.g.:
+# - create_base_canvas_with_hero
+# - place_logo_on_canvas
+# - place_copy_on_canvas
+# - place_cta_on_canvas
+# - run_full_inference that returns Dict[str, PIL.Image]
+# - encode_image_to_data_url to convert PIL.Image to base64 string
 
-# --- Main Ad Generation Logic ---
+
+# 4. Pydantic models
+class FormatItem(BaseModel):
+    id: str
+    width: int
+    height: int
+
+class GenerateRequest(BaseModel):
+    sourceImage: str
+    userInputHeroBbox: Optional[Dict[str,int]] = None
+    
+    # --- Logo ---
+    brandLogo: Optional[str] = None
+    includeLogo: bool = False
+    logoAppliesToAll: bool = True
+    logoSelectedFormats: List[str] = []
+    logoPositionByOrientation: Dict[str, str] = {}
+    # --- Ad Copy ---
+    includeCopy: bool = False
+    adCopy: Optional[str] = None
+    # This is now a font filename from the frontend, e.g., "Inter-Regular.ttf"
+    copyFontFamily: Optional[str] = "arial.ttf"
+    copyAppliesToAll: bool = True
+    copySelectedFormats: List[str] = []
+    copyPositionByOrientation: Dict[str, str] = {}
+    copyBrandColor: str = "#000000"
+    # --- CTA ---
+    includeCta: bool = False
+    ctaText: Optional[str] = None
+    ctaAppliesToAll: bool = True
+    ctaSelectedFormats: List[str] = []
+    ctaPositionByOrientation: Dict[str, str] = {}
+    # This is also a font filename
+    ctaFont: Optional[str] = "arial.ttf" 
+    ctaTextColor: Optional[str] = "#FFFFFF"
+    ctaBgColor: Optional[str] = "#000000"
+
+    formats: List[FormatItem]
+
+class GenerateResponse(BaseModel):
+    results: Dict[str,str]
+
+# 5. FastAPI app and endpoint
+app = FastAPI()
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 @app.post("/generate", response_model=GenerateResponse)
 async def generate_ads(req: GenerateRequest):
     try:
@@ -803,38 +820,40 @@ async def generate_ads(req: GenerateRequest):
         print(f"Error in /generate: {e}"); traceback.print_exc()
         raise HTTPException(500,detail=f"Internal server error: {str(e)}")
 
-# --- Debug Endpoint ---
-@app.post("/debug_hero_mask")
-async def debug_hero_mask_endpoint(req: GenerateRequest):
-    try:
-        src_img_pil = decode_data_url(req.sourceImage)
-        ow, oh = src_img_pil.size
-        print(f"Debug: Img size: {src_img_pil.size}, mode: {src_img_pil.mode}")
-        
-        hero_bbox = get_hero_bbox_from_input_or_sam(src_img_pil.copy(), req.userInputHeroBbox)
-        
-        viz = src_img_pil.copy().convert("RGBA")
-        draw_viz = ImageDraw.Draw(viz)
-        
-        debug_font_size = max(15, int(min(ow,oh)*0.03)) 
-        # Use the default font path for debugging text
-        dfont = ImageFont.truetype(DEFAULT_FONT_PATH, debug_font_size)
-        
-        if hero_bbox:
-            x1,y1,x2,y2 = hero_bbox
-            draw_viz.rectangle([x1,y1,x2,y2],outline="lime",width=max(1,int(min(ow,oh)*0.005))) 
-            
-            hero_mask_overlay = Image.new("RGBA", src_img_pil.size, (0,0,0,0)) 
-            draw_hero_mask = ImageDraw.Draw(hero_mask_overlay)
-            draw_hero_mask.rectangle([x1,y1,x2,y2], fill=(0,255,0,70)) 
-            viz = Image.alpha_composite(viz, hero_mask_overlay)
-            
-            draw_viz = ImageDraw.Draw(viz)
-            draw_viz.text((10,10),f"Hero BBox: ({x1},{y1})-({x2},{y2})",fill="lime",font=dfont)
-        else: 
-            draw_viz.text((10,10),"No hero bbox detected.",fill="red",font=dfont)
-            
-        return {"debug_image":encode_image_to_data_url(viz),"hero_bbox":hero_bbox,"image_size":src_img_pil.size}
-    except Exception as e: 
-        print(f"Error in /debug_hero_mask: {e}"); traceback.print_exc()
-        raise HTTPException(status_code=500,detail=str(e))
+# 6. Modal stub setup
+import modal
+
+modal_stub = modal.Stub("lunarian-backend-modal")
+
+# Build image with all dependencies your code needs:
+modal_image = (
+    modal.Image.debian_slim()
+    .pip_install([
+        "fastapi", "uvicorn", "pydantic",
+        "torch", "numpy", "Pillow", "requests",
+        "segment-anything"
+        # plus any other libraries your inference needs
+    ])
+)
+
+# Environment variables for Modal function
+env_vars = {
+    "SAM_CHECKPOINT_PATH": SAM_CHECKPOINT_PATH,
+    "SAM_CHECKPOINT_URL": SAM_CHECKPOINT_URL,
+    "SAM_MODEL_TYPE": SAM_MODEL_TYPE,
+}
+
+@modal_stub.function(
+    image=modal_image,
+    gpu="A10G",
+    timeout=800,
+    env_vars=env_vars,
+)
+@modal.asgi_app()
+def fastapi_app():
+    return app
+
+if __name__ == "__main__":
+    # For local testing: set SAM_CHECKPOINT_URL in your environment and ensure internet access
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
