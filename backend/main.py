@@ -70,10 +70,13 @@ except Exception as e:
 
 
 # 3. Helper functions: paste your existing code here
-backend_dir = os.path.dirname(__file__)
-FONT_DIR = os.path.join(backend_dir, "fonts")
-DEFAULT_FONT_PATH = os.path.join(FONT_DIR, "arial.ttf")
-FONT_MAP = {
+
+def get_font_path(font_filename: Optional[str]) -> str:
+    """Safely get a valid font path from a filename, with fallback."""
+    backend_dir = os.path.dirname(__file__)
+    FONT_DIR = os.path.join(backend_dir, "fonts", font_filename)
+    DEFAULT_FONT_PATH = os.path.join(FONT_DIR, "arial.ttf")
+    FONT_MAP = {
     "arial.ttf": os.path.join(FONT_DIR, "arial.ttf"),
     "helvetica.ttf": os.path.join(FONT_DIR, "helvetica.ttf"),
     "verdana.ttf": os.path.join(FONT_DIR, "verdana.ttf"),
@@ -88,9 +91,6 @@ FONT_MAP = {
     "Poppins-Regular.ttf": os.path.join(FONT_DIR, "Poppins-Regular.ttf"),
     "Nunito-Regular.ttf": os.path.join(FONT_DIR, "Nunito-Regular.ttf"),
 }
-
-def get_font_path(font_filename: Optional[str]) -> str:
-    """Safely get a valid font path from a filename, with fallback."""
     if not font_filename:
         return DEFAULT_FONT_PATH
     
@@ -829,7 +829,7 @@ modal_app = modal.App("lunarian-backend-modal")
 modal_image = (
     modal.Image.debian_slim()
     .pip_install([
-        "torch", "numpy", "Pillow", "requests",
+        "torch", "numpy", "Pillow", "requests","fastapi",
         "segment-anything","torchvision"
     ])
     .env({
