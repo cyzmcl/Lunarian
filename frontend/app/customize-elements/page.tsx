@@ -50,19 +50,19 @@ const POSITION_OPTIONS_DATA = [
 const AI_CHOOSE_OPTION_DATA = { value: "let_ai_choose", label: "Let AI Choose" };
 
 const FONT_OPTIONS_DATA = [
-    { label: "Arial", value: "Arial, sans-serif", filename: "Arial.ttf" },
-    { label: "Helvetica", value: "Helvetica, sans-serif", filename: "Helvetica.ttf" },
-    { label: "Inter", value: "Inter, sans-serif", filename: "Inter.ttf" },
-    { label: "Inter Italic", value: "Inter-Italic, sans-serif", filename: "Inter-Italic.ttf" },
-    { label: "Roboto", value: "Roboto, sans-serif", filename: "Roboto.ttf" },
-    { label: "Open Sans", value: "'Open Sans', sans-serif", filename: "OpenSans.ttf" },
-    { label: "Lato", value: "Lato, sans-serif", filename: "Lato.ttf" },
-    { label: "Montserrat", value: "Montserrat, sans-serif", filename: "Montserrat.ttf" },
-    { label: "Poppins", value: "Poppins, sans-serif", filename: "Poppins.ttf" },
-    { label: "Nunito", value: "Nunito, sans-serif", filename: "Nunito.ttf" },
-    { label: "Rubik", value: "Rubik, sans-serif", filename: "Rubik.ttf" },
-    { label: "Georgia", value: "Georgia, serif", filename: "Georgia.ttf" },
-    { label: "Times New Roman", value: "Times, serif", filename: "Times.ttf" },
+    { label: "Arial", value: "Arial.ttf", filename: "Arial.ttf" },
+    { label: "Helvetica", value: "Helvetica.ttf", filename: "Helvetica.ttf" },
+    { label: "Inter", value: "Inter.ttf", filename: "Inter.ttf" },
+    { label: "Inter Italic", value: "Inter-Italic.ttf", filename: "Inter-Italic.ttf" },
+    { label: "Roboto", value: "Roboto.ttf", filename: "Roboto.ttf" },
+    { label: "Open Sans", value: "OpenSans.ttf", filename: "OpenSans.ttf" },
+    { label: "Lato", value: "Lato.ttf", filename: "Lato.ttf" },
+    { label: "Montserrat", value: "Montserrat.ttf", filename: "Montserrat.ttf" },
+    { label: "Poppins", value: "Poppins.ttf", filename: "Poppins.ttf" },
+    { label: "Nunito", value: "Nunito.ttf", filename: "Nunito.ttf" },
+    { label: "Rubik", value: "Rubik.ttf", filename: "Rubik.ttf" },
+    { label: "Georgia", value: "Georgia.ttf", filename: "Georgia.ttf" },
+    { label: "Times New Roman", value: "Times.ttf", filename: "Times.ttf" },
 ];
 
 // Placeholder Icons (replace with actual Chakra UI v3 icons or a library like lucide-react)

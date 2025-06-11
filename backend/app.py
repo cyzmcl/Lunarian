@@ -92,18 +92,18 @@ DEFAULT_FONT_PATH = os.path.join(FONT_DIR, "Arial.ttf")
 # This map connects the filenames from the frontend to the full paths on the server.
 # Ensure these font files exist in your `backend/fonts/` directory.
 FONT_MAP = {
-    "Arial.ttf": os.path.join(FONT_DIR, "Arial.ttf"),
+     "Arial.ttf": os.path.join(FONT_DIR, "Arial.ttf"),
     "Helvetica.ttf": os.path.join(FONT_DIR, "Helvetica.ttf"),
-    "Verdana.ttf": os.path.join(FONT_DIR, "Verdana.ttf"),
-    "Georgia": os.path.join(FONT_DIR, "Georgia.ttf"),
+    "Inter.ttf": os.path.join(FONT_DIR, "Inter.ttf"),
+    "Roboto.ttf": os.path.join(FONT_DIR, "Roboto.ttf"),
+    "OpenSans.ttf": os.path.join(FONT_DIR, "OpenSans.ttf"),
+    "Lato.ttf": os.path.join(FONT_DIR, "Lato-Regular.ttf"),
+    "Montserrat.ttf": os.path.join(FONT_DIR, "Montserrat.ttf"),
+    "Poppins.ttf": os.path.join(FONT_DIR, "Poppins.ttf"),
+    "Nunito.ttf": os.path.join(FONT_DIR, "Nunito.ttf"),
+    "Rubik.ttf": os.path.join(FONT_DIR, "Rubik.ttf"),
+    "Georgia.ttf": os.path.join(FONT_DIR, "Georgia.ttf"),
     "Times.ttf": os.path.join(FONT_DIR, "Times.ttf"),
-    "Inter-Regular.ttf": os.path.join(FONT_DIR, "Inter-Regular.ttf"),
-    "Roboto-Regular.ttf": os.path.join(FONT_DIR, "Roboto-Regular.ttf"),
-    "OpenSans-Regular.ttf": os.path.join(FONT_DIR, "OpenSans-Regular.ttf"),
-    "Lato-Regular.ttf": os.path.join(FONT_DIR, "Lato-Regular.ttf"),
-    "Montserrat-Regular.ttf": os.path.join(FONT_DIR, "Montserrat-Regular.ttf"),
-    "Poppins-Regular.ttf": os.path.join(FONT_DIR, "Poppins-Regular.ttf"),
-    "Nunito-Regular.ttf": os.path.join(FONT_DIR, "Nunito-Regular.ttf"),
 }
 
 def get_font_path(font_filename: Optional[str]) -> str:
