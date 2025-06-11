@@ -74,15 +74,14 @@ except Exception as e:
 def get_font_path(font_filename: Optional[str]) -> str:
     """Safely get a valid font path from a filename, with fallback."""
     backend_dir = os.path.dirname(__file__)
-    FONT_DIR = os.path.join(backend_dir, "fonts", font_filename)
-    DEFAULT_FONT_PATH = os.path.join(FONT_DIR, "arial.ttf")
+    FONT_DIR = os.path.join(backend_dir, "fonts")
+    DEFAULT_FONT_PATH = os.path.join(FONT_DIR, "Arial.ttf")
     FONT_MAP = {
-    "arial.ttf": os.path.join(FONT_DIR, "arial.ttf"),
-    "helvetica.ttf": os.path.join(FONT_DIR, "helvetica.ttf"),
-    "verdana.ttf": os.path.join(FONT_DIR, "verdana.ttf"),
-    "georgia.ttf": os.path.join(FONT_DIR, "georgia.ttf"),
-    "times.ttf": os.path.join(FONT_DIR, "times.ttf"),
-    "cour.ttf": os.path.join(FONT_DIR, "cour.ttf"),
+    "Arial.ttf": os.path.join(FONT_DIR, "Arial.ttf"),
+    "Helvetica.ttf": os.path.join(FONT_DIR, "Helvetica.ttf"),
+    "Verdana.ttf": os.path.join(FONT_DIR, "Verdana.ttf"),
+    "Georgia": os.path.join(FONT_DIR, "Georgia.ttf"),
+    "Times.ttf": os.path.join(FONT_DIR, "Times.ttf"),
     "Inter-Regular.ttf": os.path.join(FONT_DIR, "Inter-Regular.ttf"),
     "Roboto-Regular.ttf": os.path.join(FONT_DIR, "Roboto-Regular.ttf"),
     "OpenSans-Regular.ttf": os.path.join(FONT_DIR, "OpenSans-Regular.ttf"),
@@ -92,9 +91,11 @@ def get_font_path(font_filename: Optional[str]) -> str:
     "Nunito-Regular.ttf": os.path.join(FONT_DIR, "Nunito-Regular.ttf"),
 }
     if not font_filename:
+        print(f"get_font_path: No font_filename provided, using default {DEFAULT_FONT_PATH}", flush=True)
         return DEFAULT_FONT_PATH
-    
+   
     path = FONT_MAP.get(font_filename, DEFAULT_FONT_PATH)
+   
     if not os.path.exists(path):
         print(f"Warning: Font file '{font_filename}' mapped to '{path}' but not found. Falling back to default.")
         return DEFAULT_FONT_PATH
@@ -303,7 +304,7 @@ class GenerateRequest(BaseModel):
     includeCopy: bool = False
     adCopy: Optional[str] = None
     # This is now a font filename from the frontend, e.g., "Inter-Regular.ttf"
-    copyFontFamily: Optional[str] = "arial.ttf"
+    copyFontFamily: Optional[str] = None
     copyAppliesToAll: bool = True
     copySelectedFormats: List[str] = []
     copyPositionByOrientation: Dict[str, str] = {}
@@ -315,7 +316,7 @@ class GenerateRequest(BaseModel):
     ctaSelectedFormats: List[str] = []
     ctaPositionByOrientation: Dict[str, str] = {}
     # This is also a font filename
-    ctaFont: Optional[str] = "arial.ttf" 
+    ctaFont: Optional[str] = None 
     ctaTextColor: Optional[str] = "#FFFFFF"
     ctaBgColor: Optional[str] = "#000000"
 

@@ -46,7 +46,7 @@ class GenerateRequest(BaseModel):
     includeCopy: bool = False
     adCopy: Optional[str] = None
     # This is now a font filename from the frontend, e.g., "Inter-Regular.ttf"
-    copyFontFamily: Optional[str] = "/fonts/arial.ttf"
+    copyFontFamily: Optional[str] = None
     copyAppliesToAll: bool = True
     copySelectedFormats: List[str] = []
     copyPositionByOrientation: Dict[str, str] = {}
@@ -58,7 +58,7 @@ class GenerateRequest(BaseModel):
     ctaSelectedFormats: List[str] = []
     ctaPositionByOrientation: Dict[str, str] = {}
     # This is also a font filename
-    ctaFont: Optional[str] = "/fonts/arial.ttf" 
+    ctaFont: Optional[str] = None 
     ctaTextColor: Optional[str] = "#FFFFFF"
     ctaBgColor: Optional[str] = "#000000"
 
@@ -87,17 +87,16 @@ backend_dir = os.path.dirname(__file__)
 # --- NEW FONT HANDLING LOGIC ---
 # This section replaces the old font setup.
 FONT_DIR = os.path.join(backend_dir, "fonts")
-DEFAULT_FONT_PATH = os.path.join(FONT_DIR, "arial.ttf")
+DEFAULT_FONT_PATH = os.path.join(FONT_DIR, "Arial.ttf")
 
 # This map connects the filenames from the frontend to the full paths on the server.
 # Ensure these font files exist in your `backend/fonts/` directory.
 FONT_MAP = {
-    "arial.ttf": os.path.join(FONT_DIR, "arial.ttf"),
-    "helvetica.ttf": os.path.join(FONT_DIR, "helvetica.ttf"),
-    "verdana.ttf": os.path.join(FONT_DIR, "verdana.ttf"),
-    "georgia.ttf": os.path.join(FONT_DIR, "georgia.ttf"),
-    "times.ttf": os.path.join(FONT_DIR, "times.ttf"),
-    "cour.ttf": os.path.join(FONT_DIR, "cour.ttf"),
+    "Arial.ttf": os.path.join(FONT_DIR, "Arial.ttf"),
+    "Helvetica.ttf": os.path.join(FONT_DIR, "Helvetica.ttf"),
+    "Verdana.ttf": os.path.join(FONT_DIR, "Verdana.ttf"),
+    "Georgia": os.path.join(FONT_DIR, "Georgia.ttf"),
+    "Times.ttf": os.path.join(FONT_DIR, "Times.ttf"),
     "Inter-Regular.ttf": os.path.join(FONT_DIR, "Inter-Regular.ttf"),
     "Roboto-Regular.ttf": os.path.join(FONT_DIR, "Roboto-Regular.ttf"),
     "OpenSans-Regular.ttf": os.path.join(FONT_DIR, "OpenSans-Regular.ttf"),
