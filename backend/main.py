@@ -90,6 +90,15 @@ def get_font_path(font_filename: Optional[str]) -> str:
     "Georgia.ttf": os.path.join(FONT_DIR, "Georgia.ttf"),
     "Times.ttf": os.path.join(FONT_DIR, "Times.ttf"),
 }
+    print("Debug: BASE_DIR:", backend_dir, flush=True)
+    print("Debug: Looking for FONT_DIR at:", FONT_DIR, "Exists?", os.path.isdir(FONT_DIR), flush=True)
+    if os.path.isdir(FONT_DIR):
+        try:
+            print("Debug: FONT_DIR contents:", os.listdir(FONT_DIR), flush=True)
+        except Exception as e:
+            print("Debug: Error listing FONT_DIR:", e, flush=True)
+    else:
+        print("Debug: FONT_DIR not found; fonts likely not packaged", flush=True)
     if not font_filename:
         print(f"get_font_path: No font_filename provided, using default {DEFAULT_FONT_PATH}", flush=True)
         return DEFAULT_FONT_PATH
