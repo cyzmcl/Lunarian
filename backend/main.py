@@ -8,7 +8,7 @@ import base64
 import requests
 import torch
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageColor
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Tuple
@@ -284,6 +284,15 @@ def get_edges_for_pos_key(pos_key: str) -> set:
     if pos_key in ("top_center", "bottom_center"): edges.add("top" if "top" in pos_key else "bottom")
     if pos_key in ("left_middle", "right_middle"): edges.add("left" if "left" in pos_key else "right")
     return edges
+
+def resolve_color(c):
+    if c == "transparent":
+        return (0, 0, 0, 0)  # Fully transparent RGBA
+    try:
+        return ImageColor.getrgb(c)
+    except:
+        return (255, 255, 255)  # Fallback to white if invalid color
+
 # Paste any other helpers from your original app.py, e.g.:
 # - create_base_canvas_with_hero
 # - place_logo_on_canvas
@@ -799,8 +808,9 @@ async def generate_ads(req: GenerateRequest):
                         cta_fill_color = (0, 0, 0, 0) if req.ctaBgColor == "transparent" else req.ctaBgColor
                         draw.rectangle(
                             [(px, current_y_offset), (px + el_w, current_y_offset + el_h)],
-                            fill=cta_fill_color
+                            fill=resolve_color(req.ctaBgColor)
                         )
+
                             
                         draw.text(
                                 (px + el_detail["text_offset_x"], current_y_offset + el_detail["text_offset_y"]),
