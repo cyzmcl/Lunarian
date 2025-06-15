@@ -805,17 +805,17 @@ async def generate_ads(req: GenerateRequest):
                             )
                     
                     elif el_name == "cta":
-                        cta_fill_color = (0, 0, 0, 0) if req.ctaBgColor == "transparent" else req.ctaBgColor
-                        draw.rectangle(
-                            [(px, current_y_offset), (px + el_w, current_y_offset + el_h)],
-                            fill=resolve_color(req.ctaBgColor)
-                        )
-
-                            
+                        cta_is_transparent = req.ctaBgColor in ["transparent", "#00000000"]
+                        if not cta_is_transparent:
+                            # Only draw the filled background if it's not transparent
+                            draw.rectangle(
+                                [(px, current_y_offset), (px + el_w, current_y_offset + el_h)],
+                                fill=resolve_color(req.ctaBgColor)
+                            )  
                         draw.text(
                                 (px + el_detail["text_offset_x"], current_y_offset + el_detail["text_offset_y"]),
                                 el_detail["content"], 
-                                fill=req.ctaTextColor, 
+                                fill=resolve_color(req.ctaTextColor),
                                 font=el_detail["font"]
                         )
 
